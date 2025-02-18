@@ -23,6 +23,8 @@ public class Robot extends TimedRobot {
   @Override
   public void robotPeriodic() {
     CommandScheduler.getInstance().run();
+    m_robotContainer.readColorSensor();
+
 
     /*
      * This example of adding Limelight is very simple and may not be sufficient for on-field use.
