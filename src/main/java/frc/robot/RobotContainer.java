@@ -24,16 +24,13 @@ import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 
 import com.revrobotics.ColorSensorV3;
-
+import com.revrobotics.RelativeEncoder;
 import com.revrobotics.spark.SparkLowLevel.MotorType;
 import com.revrobotics.spark.config.SparkMaxConfig;
 import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 import com.revrobotics.spark.SparkMax;
-import com.revrobotics.spark.SparkBase.PersistMode;
-import com.revrobotics.spark.SparkBase.ResetMode;
 
 public class RobotContainer {
-    private final SparkMax motor;
     private final CommandXboxController joysticks;
 
     private double MaxSpeed = TunerConstants.kSpeedAt12Volts.in(MetersPerSecond); // desired top speed
@@ -53,6 +50,9 @@ public class RobotContainer {
     private final CommandXboxController joystick = new CommandXboxController(0);
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
 
+    private SparkMax neoMotor;
+    private RelativeEncoder neoEncoder;
+
     /* Path follower */
     private final SendableChooser<Command> autoChooser;
 
@@ -63,26 +63,40 @@ public class RobotContainer {
     // Hysteresis state variable
     private boolean lastWhite = false;
 
+    private void initializeNeoMotor() {
+        try {
+          neoMotor = new SparkMax(5, MotorType.kBrushless);
+          neoEncoder = neoMotor.getEncoder();
+    
+          SparkMaxConfig config = new SparkMaxConfig();
+          config.idleMode(IdleMode.kBrake);
+    
+          if (neoMotor.hasStickyFault()) {
+            System.out.println("Sticky faults: " + neoMotor.getStickyFaults());
+            neoMotor.clearFaults();
+          }
+    
+          if (neoMotor.hasActiveFault()) {
+            System.out.println("Active faults: " + neoMotor.getFaults());
+            neoMotor.clearFaults();
+          }
+    
+          neoEncoder.setPosition(0);
+        } catch (Exception e) {
+          System.out.println("ERROR during initialization: " + e.getMessage());
+          e.printStackTrace();
+        }
+      }
+
     public RobotContainer() {
-        motor = new SparkMax(9, MotorType.kBrushless); // Motor ID 5 (change if needed)
-        
-        // Create a configuration object and set parameters
-        SparkMaxConfig motorConfig = new SparkMaxConfig();
-        motorConfig.smartCurrentLimit(40)
-                   .idleMode(IdleMode.kBrake);
-        
-        // Apply configuration to motor
-        motor.configure(motorConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
-        
-        // Initialize the Xbox controller
         joysticks = new CommandXboxController(1);
         autoChooser = AutoBuilder.buildAutoChooser("Tests");
         SmartDashboard.putData("Auto Mode", autoChooser);
+        initializeNeoMotor();
         configureBindings();
     }
 
     private void configureBindings() {
-        motor.set(-joysticks.getLeftY());
         // Default drivetrain command
         drivetrain.setDefaultCommand(
             drivetrain.applyRequest(() ->
@@ -109,6 +123,9 @@ public class RobotContainer {
         joystick.back().and(joystick.x()).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
         joystick.start().and(joystick.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
         joystick.start().and(joystick.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
+
+        // Add Neo motor control
+        neoMotor.set(-joysticks.getLeftY());
 
         // Reset field-centric heading on left bumper press
         joystick.leftBumper().onTrue(drivetrain.runOnce(() -> drivetrain.seedFieldCentric()));
