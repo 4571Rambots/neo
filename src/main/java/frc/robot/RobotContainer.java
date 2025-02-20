@@ -17,24 +17,17 @@ import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj.util.Color;
 import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.RunCommand;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
+import frc.robot.subsystems.Shooter;
 
 import com.revrobotics.ColorSensorV3;
 
-import com.revrobotics.spark.SparkLowLevel.MotorType;
-import com.revrobotics.spark.config.SparkMaxConfig;
-import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
-import com.revrobotics.spark.SparkMax;
-import com.revrobotics.spark.SparkBase.PersistMode;
-import com.revrobotics.spark.SparkBase.ResetMode;
-
 public class RobotContainer {
-    private final SparkMax motor;
-    private final CommandXboxController joysticks;
 
     private double MaxSpeed = TunerConstants.kSpeedAt12Volts.in(MetersPerSecond); // desired top speed
     private double MaxAngularRate = RotationsPerSecond.of(0.75).in(RadiansPerSecond); // max angular velocity
@@ -51,7 +44,13 @@ public class RobotContainer {
 
     private final Telemetry logger = new Telemetry(MaxSpeed);
     private final CommandXboxController joystick = new CommandXboxController(0);
+    private final CommandXboxController joysticks = new CommandXboxController(1);
+
+    
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
+
+    /* Instantiate Shooter subsystem */
+    private final Shooter shooter = new Shooter();
 
     /* Path follower */
     private final SendableChooser<Command> autoChooser;
@@ -64,25 +63,12 @@ public class RobotContainer {
     private boolean lastWhite = false;
 
     public RobotContainer() {
-        motor = new SparkMax(9, MotorType.kBrushless); // Motor ID 5 (change if needed)
-        
-        // Create a configuration object and set parameters
-        SparkMaxConfig motorConfig = new SparkMaxConfig();
-        motorConfig.smartCurrentLimit(40)
-                   .idleMode(IdleMode.kBrake);
-        
-        // Apply configuration to motor
-        motor.configure(motorConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
-        
-        // Initialize the Xbox controller
-        joysticks = new CommandXboxController(1);
         autoChooser = AutoBuilder.buildAutoChooser("Tests");
         SmartDashboard.putData("Auto Mode", autoChooser);
         configureBindings();
     }
 
     private void configureBindings() {
-        motor.set(-joysticks.getLeftY());
         // Default drivetrain command
         drivetrain.setDefaultCommand(
             drivetrain.applyRequest(() ->
@@ -113,6 +99,19 @@ public class RobotContainer {
         // Reset field-centric heading on left bumper press
         joystick.leftBumper().onTrue(drivetrain.runOnce(() -> drivetrain.seedFieldCentric()));
 
+        // When "A" is pressed, set shooter speed to 100%
+        joysticks.a().onTrue(new RunCommand(
+            () -> shooter.shoot(1.0), // 100% speed
+            shooter
+        ));
+
+        // When "B" is pressed, stop the shooter
+        joysticks.b().onTrue(new RunCommand(
+            () -> shooter.shoot(0), // Stop motor
+            shooter
+        ));
+
+
         drivetrain.registerTelemetry(logger::telemeterize);
     }
 
@@ -124,30 +123,29 @@ public class RobotContainer {
      * Reads the color sensor and prints "White" if the red channel is within the desired range,
      * otherwise prints "Not White". This version uses hysteresis but still requires that red is never above 0.26.
      */
-    public void readColorSensor() {
-        Color detectedColor = colorSensor.getColor();
-        double redValue = detectedColor.red;
-        boolean isWhite;
+    /**
+ * Reads the color sensor and prints "White" if the red channel is within the desired range,
+ * otherwise prints "Not White". Uses a strict threshold instead of hysteresis.
+ */
+public void readColorSensor() {
+    Color detectedColor = colorSensor.getColor();
+    double redValue = detectedColor.red;
 
-        // Use hysteresis: if previously white, require red to stay between 0.245 and 0.26.
-        // Otherwise, require red to be between 0.25 and 0.26.
-        if (lastWhite) {
-            isWhite = (redValue >= 0.248 && redValue <= 0.250);
-        } else {
-            isWhite = (redValue >= 0.248 && redValue <= 0.250);
-        }
+    // Define the threshold for white detection
+    boolean isWhite = (redValue >= 0.25 && redValue <= 0.26);
+    boolean notWhite = (redValue >= 0.25 && redValue <= 0.26);
 
-        // Update state
-        lastWhite = isWhite;
 
-        // Print result
-        if (isWhite) {
-            System.out.println("White");
-        } else {
-            System.out.println("Not White");
-        }
-
-        // Optional: Print the red channel value for debugging.
-        System.out.println("Red Value: " + redValue);
+    // Print result
+    if (isWhite) {
+        System.out.println("White");
+    } 
+    if (notWhite) {
+        System.out.println("Not White");
     }
+
+    // Optional: Print the red channel value for debugging.
+    System.out.println("Red Value: " + redValue);
+}
+
 }
