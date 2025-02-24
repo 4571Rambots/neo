@@ -1,16 +1,10 @@
-// Copyright (c) FIRST and other WPILib contributors.
-// Open Source Software; you can modify and/or share it under the terms of
-// the WPILib BSD license file in the root directory of this project.
-
 package frc.robot;
 
 import static edu.wpi.first.units.Units.*;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveRequest;
-
 import com.pathplanner.lib.auto.AutoBuilder;
-
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.wpilibj.I2C;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
@@ -18,12 +12,14 @@ import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj.util.Color;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.RunCommand;
+import edu.wpi.first.wpilibj2.command.InstantCommand;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.Shooter;
+import frc.robot.subsystems.Position;
 
 import com.revrobotics.ColorSensorV3;
 
@@ -45,12 +41,13 @@ public class RobotContainer {
     private final Telemetry logger = new Telemetry(MaxSpeed);
     private final CommandXboxController joystick = new CommandXboxController(0);
     private final CommandXboxController joysticks = new CommandXboxController(1);
-
     
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
 
     /* Instantiate Shooter subsystem */
     private final Shooter shooter = new Shooter();
+    /* Instantiate Position subsystem */
+    private final Position position = new Position();
 
     /* Path follower */
     private final SendableChooser<Command> autoChooser;
@@ -59,13 +56,44 @@ public class RobotContainer {
     private final I2C.Port i2cPort = I2C.Port.kOnboard;
     private final ColorSensorV3 colorSensor = new ColorSensorV3(i2cPort);
 
-    // Hysteresis state variable
-    private boolean lastWhite = false;
+    // Flags to track shooter state
+    private boolean shooterEnabled = false;
 
     public RobotContainer() {
         autoChooser = AutoBuilder.buildAutoChooser("Tests");
         SmartDashboard.putData("Auto Mode", autoChooser);
         configureBindings();
+
+        // Set default command for the Position subsystem.
+        // This uses the second controller's left Y axis to control position manually
+        // In RobotContainer, within your constructor or configuration method:
+        position.setDefaultCommand(new RunCommand(() -> {
+            double manualSpeed = joysticks.getLeftY();
+            // Optionally apply a deadband
+            if (Math.abs(manualSpeed) >= 0.1) {
+                // Cancel auto-zero mode if any manual input is detected
+                position.cancelAutoZero();
+                position.manualControl(manualSpeed);
+            } else {
+                // Optionally, you can hold the motor at zero when there's no input and auto-zero isn't active.
+                if (!position.isAutoZeroActive()) {
+                    position.manualControl(0.0);
+                }
+            }
+        }, position));
+
+
+        // Start periodic color sensor check in a dedicated thread
+        new Thread(() -> {
+            while (true) {
+                readColorSensor();
+                try {
+                    Thread.sleep(50); // Check every 50ms
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
     }
 
     private void configureBindings() {
@@ -99,19 +127,29 @@ public class RobotContainer {
         // Reset field-centric heading on left bumper press
         joystick.leftBumper().onTrue(drivetrain.runOnce(() -> drivetrain.seedFieldCentric()));
 
-        // When "A" is pressed, set shooter speed to 100%
-        joysticks.a().onTrue(new RunCommand(
-            () -> shooter.shoot(1.0), // 100% speed
+        // Shooter control on second controller: press A to start shooter
+        joysticks.a().whileTrue(new RunCommand(
+            () -> {
+                if (!shooterEnabled) {
+                    shooterEnabled = true;  // Enable the shooter
+                    shooter.shoot(1.0);     // Run at full speed
+                    System.out.println("Shooter Started");
+                }
+            },
             shooter
         ));
 
-        // When "B" is pressed, stop the shooter
-        joysticks.b().onTrue(new RunCommand(
-            () -> shooter.shoot(0), // Stop motor
-            shooter
-        ));
 
 
+                // Position control on second controller:
+        // Press Y to set the current position as home
+        joysticks.y().onTrue(new InstantCommand(() -> position.setHome(), position));
+        // Press B to activate "go to zero" (move to position 0)
+        joysticks.b().onTrue(new InstantCommand(() -> position.goToZero(), position));
+
+
+        // Position control on second controller:
+        
         drivetrain.registerTelemetry(logger::telemeterize);
     }
 
@@ -119,33 +157,21 @@ public class RobotContainer {
         return autoChooser.getSelected();
     }
 
-    /**
-     * Reads the color sensor and prints "White" if the red channel is within the desired range,
-     * otherwise prints "Not White". This version uses hysteresis but still requires that red is never above 0.26.
-     */
-    /**
- * Reads the color sensor and prints "White" if the red channel is within the desired range,
- * otherwise prints "Not White". Uses a strict threshold instead of hysteresis.
- */
-public void readColorSensor() {
-    Color detectedColor = colorSensor.getColor();
-    double redValue = detectedColor.red;
+    public void readColorSensor() {
+        Color detectedColor = colorSensor.getColor();
+        double redValue = detectedColor.red;
 
-    // Define the threshold for white detection
-    boolean isWhite = (redValue >= 0.25 && redValue <= 0.26);
-    boolean notWhite = (redValue >= 0.25 && redValue <= 0.26);
+        // Define the threshold for white detection
+        boolean isWhite = (redValue >= 0.245 && redValue <= 0.252);
 
+        // If white is detected and the shooter is enabled, stop the shooter.
+        if (isWhite && shooterEnabled) {
+            shooter.shoot(0);         // Stop the motor
+            shooterEnabled = false;     // Disable shooter until "A" is pressed again
+            System.out.println("White detected - Stopping Shooter");
+        }
 
-    // Print result
-    if (isWhite) {
-        System.out.println("White");
-    } 
-    if (notWhite) {
-        System.out.println("Not White");
+        // Debug output
+        System.out.println("Red Value: " + redValue);
     }
-
-    // Optional: Print the red channel value for debugging.
-    System.out.println("Red Value: " + redValue);
-}
-
 }
